@@ -326,7 +326,11 @@ pub fn prepare_handshake(
 ) -> (String, String) {
     let key = gen_key();
     let host_header = if let Some(custom_host) = extra_headers.get("Host") {
-        custom_host.to_owned()
+        format!(
+            "Host: {}{}",
+            custom_host.to_owned(),
+            uri.port_u16().map(|p| format!(":{p}")).unwrap_or_default()
+        )
     } else {
         format!(
             "Host: {}{}",
@@ -360,7 +364,7 @@ pub fn prepare_handshake(
         version = http::Version::HTTP_11,
         headers = headers.join("\r\n")
     );
-    tracing::debug!("handshake request\n{}", req_str);
+    tracing::info!("handshake request\n{}", req_str);
     (key, req_str)
 }
 
