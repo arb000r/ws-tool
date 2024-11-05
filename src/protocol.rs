@@ -1,5 +1,5 @@
-use http;
 use bytes::BytesMut;
+use http;
 use sha1::Digest;
 use std::collections::HashMap;
 use std::fmt::Debug;
@@ -325,12 +325,17 @@ pub fn prepare_handshake(
     version: u8,
 ) -> (String, String) {
     let key = gen_key();
-    let mut headers = vec![
+    let host_header = if let Some(custom_host) = extra_headers.get("Host") {
+        custom_host.to_owned()
+    } else {
         format!(
             "Host: {}{}",
             uri.host().unwrap_or_default(),
             uri.port_u16().map(|p| format!(":{p}")).unwrap_or_default()
-        ),
+        )
+    };
+    let mut headers = vec![
+        host_header,
         "Upgrade: websocket".to_string(),
         "Connection: Upgrade".to_string(),
         format!("Sec-Websocket-Key: {key}"),
