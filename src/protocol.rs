@@ -364,7 +364,7 @@ pub fn prepare_handshake(
         version = http::Version::HTTP_11,
         headers = headers.join("\r\n")
     );
-    tracing::info!("handshake request\n{}", req_str);
+    tracing::debug!("handshake request\n{}", req_str);
     (key, req_str)
 }
 
