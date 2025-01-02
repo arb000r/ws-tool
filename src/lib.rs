@@ -407,5 +407,64 @@ mod non_blocking {
     }
 }
 
+#[cfg(feature = "async_monoio")]
+mod non_blocking_monoio {
+    use http;
+    use monoio::io::{AsyncReadRent, AsyncReadRentExt, AsyncWriteRent, AsyncWriteRentExt};
+    use std::fmt::Debug;
+
+    use crate::{errors::WsError, protocol::async_req_handshake_monoio};
+
+    use super::ClientBuilder;
+
+    impl ClientBuilder {
+        /// async version of connect
+        ///
+        /// perform protocol handshake & check server response
+        pub async fn async_with_monoio_stream<C, F, S>(
+            &self,
+            uri: http::Uri,
+            mut stream: S,
+            mut check_fn: F,
+        ) -> Result<C, WsError>
+        where
+            S: AsyncReadRent + AsyncWriteRent + Unpin,
+            F: FnMut(String, http::Response<()>, S) -> Result<C, WsError>,
+        {
+            let (key, resp) = async_req_handshake_monoio(
+                &mut stream,
+                &uri,
+                &self.protocols,
+                &self.extensions,
+                self.version,
+                self.headers.clone(),
+            )
+            .await?;
+            check_fn(key, resp, stream)
+        }
+    }
+
+    async fn async_write_resp_monoio<S, T>(
+        resp: http::Response<T>,
+        stream: &mut S,
+    ) -> Result<(), WsError>
+    where
+        S: AsyncReadRentExt + AsyncWriteRentExt + Unpin,
+        T: ToString + Debug,
+    {
+        let mut resp_lines = vec![format!("{:?} {}", resp.version(), resp.status())];
+        resp.headers().iter().for_each(|(k, v)| {
+            resp_lines.push(format!("{}: {}", k, v.to_str().unwrap_or_default()))
+        });
+        resp_lines.push("\r\n".to_string());
+        let (result, _) = stream.write_all(resp_lines.join("\r\n").into_bytes()).await;
+        let _bytes_written = result?;
+        tracing::debug!("{:?}", &resp);
+        Ok(if resp.status() != http::StatusCode::SWITCHING_PROTOCOLS {
+            return Err(WsError::HandShakeFailed(resp.body().to_string()));
+        })
+    }
+}
+
 /// helper struct to config & construct websocket server
 pub struct ServerBuilder {}

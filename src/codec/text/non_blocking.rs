@@ -1,8 +1,7 @@
-use http;
 use crate::{
     codec::{
         AsyncFrameCodec, AsyncFrameRecv, AsyncFrameSend, FrameConfig, FrameReadState,
-        FrameWriteState, Split,
+        FrameWriteState, MonoioFrameCodec, MonoioFrameRecv, MonoioFrameSend, Split,
     },
     errors::{ProtocolError, WsError},
     frame::OpCode,
@@ -10,6 +9,8 @@ use crate::{
     Message,
 };
 use bytes::Buf;
+use http;
+use monoio::io::{AsyncReadRent, AsyncWriteRent};
 use std::borrow::Cow;
 use tokio::io::{AsyncRead, AsyncWrite};
 
@@ -209,6 +210,108 @@ where
         (
             AsyncStringRecv::new(read, read_state, self.validate_utf8),
             AsyncStringSend::new(write, write_state),
+        )
+    }
+}
+
+/// send part of text message
+pub struct MonoioStringRecv<S: AsyncReadRent> {
+    frame_codec: MonoioFrameRecv<S>,
+    validate_utf8: bool,
+}
+
+impl<S: AsyncReadRent + Unpin> MonoioStringRecv<S> {
+    /// construct method
+    pub fn new(stream: S, state: FrameReadState, validate_utf8: bool) -> Self {
+        Self {
+            frame_codec: MonoioFrameRecv::new(stream, state),
+            validate_utf8,
+        }
+    }
+
+    impl_recv! {}
+}
+
+/// recv/send text message
+pub struct MonoioStringSend<S: AsyncWriteRent> {
+    frame_codec: MonoioFrameSend<S>,
+}
+
+impl<S: AsyncWriteRent + Unpin> MonoioStringSend<S> {
+    /// construct method
+    pub fn new(stream: S, state: FrameWriteState) -> Self {
+        Self {
+            frame_codec: MonoioFrameSend::new(stream, state),
+        }
+    }
+
+    impl_send! {}
+}
+
+/// recv/send text message
+pub struct MonoioStringCodec<S: AsyncReadRent + AsyncWriteRent> {
+    frame_codec: MonoioFrameCodec<S>,
+    validate_utf8: bool,
+}
+
+impl<S: AsyncReadRent + AsyncWriteRent + Unpin> MonoioStringCodec<S> {
+    /// construct method
+    pub fn new(stream: S) -> Self {
+        Self {
+            frame_codec: MonoioFrameCodec::new(stream),
+            validate_utf8: false,
+        }
+    }
+
+    /// construct with config
+    pub fn new_with(stream: S, config: FrameConfig, validate_utf8: bool) -> Self {
+        Self {
+            frame_codec: MonoioFrameCodec::new_with(stream, config),
+            validate_utf8,
+        }
+    }
+
+    /// get mutable underlying stream
+    pub fn stream_mut(&mut self) -> &mut S {
+        self.frame_codec.stream_mut()
+    }
+
+    /// used for server side to construct a new server
+    pub fn factory(_req: http::Request<()>, stream: S) -> Result<Self, WsError> {
+        let config = FrameConfig {
+            mask_send_frame: false,
+            ..Default::default()
+        };
+        Ok(Self::new_with(stream, config, true))
+    }
+
+    /// used to client side to construct a new client
+    pub fn check_fn(key: String, resp: http::Response<()>, stream: S) -> Result<Self, WsError> {
+        standard_handshake_resp_check(key.as_bytes(), &resp)?;
+        Ok(Self::new_with(stream, FrameConfig::default(), true))
+    }
+
+    impl_recv! {}
+    impl_send! {}
+}
+
+impl<R, W, S> MonoioStringCodec<S>
+where
+    R: AsyncReadRent + Unpin,
+    W: AsyncWriteRent + Unpin,
+    S: AsyncReadRent + AsyncWriteRent + Unpin + Split<R = R, W = W>,
+{
+    /// split codec to recv and send parts
+    pub fn split(self) -> (MonoioStringRecv<R>, MonoioStringSend<W>) {
+        let MonoioFrameCodec {
+            stream,
+            read_state,
+            write_state,
+        } = self.frame_codec;
+        let (read, write) = stream.split();
+        (
+            MonoioStringRecv::new(read, read_state, self.validate_utf8),
+            MonoioStringSend::new(write, write_state),
         )
     }
 }

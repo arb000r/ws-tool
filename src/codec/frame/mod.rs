@@ -1,8 +1,8 @@
 use crate::errors::{ProtocolError, WsError};
 use crate::frame::{get_bit, HeaderView, OpCode, SimplifiedHeader};
-use http;
 use crate::protocol::{cal_accept_key, standard_handshake_req_check};
 use bytes::BytesMut;
+use http;
 use std::fmt::Debug;
 use std::ops::Range;
 
@@ -17,6 +17,12 @@ mod non_blocking;
 
 #[cfg(feature = "async")]
 pub use non_blocking::*;
+
+#[cfg(feature = "async_monoio")]
+mod non_blocking_monoio;
+
+#[cfg(feature = "async_monoio")]
+pub use non_blocking_monoio::*;
 
 /// text frame utf-8 checking policy
 #[derive(Debug, Clone)]
@@ -414,6 +420,41 @@ impl FrameBuffer {
             tmp: vec![0; 8192],
             produce_idx: 0,
             consume_idx: 0,
+        }
+    }
+
+    pub(crate) fn prepare_idx_and_size(&mut self, payload_size: usize) -> [usize; 3] {
+        let remain = self.buf.len() - self.produce_idx;
+        if remain >= payload_size {
+            [
+                self.produce_idx,
+                self.produce_idx + payload_size,
+                self.buf[self.produce_idx..(self.produce_idx + payload_size)].len(),
+            ]
+        } else {
+            if self.produce_idx == self.consume_idx {
+                if payload_size > self.buf.len() {
+                    self.buf.resize(payload_size, 0);
+                }
+                self.consume_idx = 0;
+                self.produce_idx = 0;
+                [0, payload_size, self.buf[0..payload_size].len()]
+            } else {
+                self.tmp.resize(self.produce_idx - self.consume_idx, 0);
+                self.tmp
+                    .copy_from_slice(&self.buf[self.consume_idx..self.produce_idx]);
+                if payload_size + self.tmp.len() > self.buf.len() {
+                    self.buf.resize(payload_size + self.tmp.len(), 0);
+                }
+                self.buf[..(self.tmp.len())].copy_from_slice(&self.tmp);
+                self.consume_idx = 0;
+                self.produce_idx = self.tmp.len();
+                [
+                    self.produce_idx,
+                    self.produce_idx + payload_size,
+                    self.buf[self.produce_idx..(self.produce_idx + payload_size)].len(),
+                ]
+            }
         }
     }
 

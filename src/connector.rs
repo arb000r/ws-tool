@@ -1,6 +1,6 @@
+use crate::{errors::WsError, protocol::Mode};
 use http;
 use http::Uri;
-use crate::{errors::WsError, protocol::Mode};
 
 /// get websocket scheme
 pub fn get_scheme(uri: &http::Uri) -> Result<Mode, WsError> {
@@ -286,3 +286,76 @@ mod non_blocking {
 
 #[cfg(feature = "async")]
 pub use non_blocking::*;
+
+#[cfg(feature = "async_monoio")]
+mod non_blocking_monoio {
+    use http::Uri;
+    use monoio::net::TcpStream;
+
+    use crate::errors::WsError;
+
+    use super::{get_host, get_scheme};
+
+    /// performance tcp connection
+    pub async fn async_monoio_tcp_connect(uri: &Uri) -> Result<TcpStream, WsError> {
+        let mode = get_scheme(uri)?;
+        let host = get_host(uri)?;
+        let port = uri.port_u16().unwrap_or_else(|| mode.default_port());
+
+        TcpStream::connect((host, port))
+            .await
+            .map_err(|e| WsError::ConnectionFailed(format!("failed to create tcp connection {e}")))
+    }
+
+    // TODO: Implement monoio split
+
+    #[cfg(feature = "async_monoio_rustls")]
+    impl<S: monoio_compat::AsyncReadExt + monoio_compat::AsyncWriteExt + Unpin> crate::codec::Split
+        for monoio_rustls::TlsStream<S>
+    {
+        type R = tokio::io::ReadHalf<monoio_rustls::TlsStream<S>>;
+        type W = tokio::io::WriteHalf<monoio_rustls::TlsStream<S>>;
+
+        fn split(self) -> (Self::R, Self::W) {
+            unimplemented!()
+        }
+    }
+
+    // #[cfg(feature = "async_monoio_rustls")]
+    // impl<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin> crate::codec::Split
+    //     for tokio_rustls::server::TlsStream<S>
+    // {
+    //     type R = tokio::io::ReadHalf<tokio_rustls::server::TlsStream<S>>;
+    //     type W = tokio::io::WriteHalf<tokio_rustls::server::TlsStream<S>>;
+    //     fn split(self) -> (Self::R, Self::W) {
+    //         tokio::io::split(self)
+    //     }
+    // }
+
+    #[cfg(feature = "async_monoio_rustls")]
+    /// async version of starting tls session
+    pub async fn async_wrap_monoio_rustls<
+        S: monoio::io::AsyncReadRent + monoio::io::AsyncWriteRent + Unpin,
+    >(
+        stream: S,
+        host: String,
+    ) -> Result<monoio_rustls::ClientTlsStream<S>, WsError> {
+        let mut root_store = rustls::RootCertStore::empty();
+        root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+        let config = rustls::ClientConfig::builder()
+            .with_root_certificates(root_store)
+            .with_no_client_auth();
+        let domain = rustls::pki_types::ServerName::try_from(host)
+            .map_err(|e| WsError::TlsDnsFailed(e.to_string()))?;
+        let connector = monoio_rustls::TlsConnector::from(std::sync::Arc::new(config));
+        let tls_stream = connector
+            .connect(domain, stream)
+            .await
+            .map_err(|e| WsError::ConnectionFailed(e.to_string()))?;
+        tracing::debug!("tls connection established");
+        Ok(tls_stream)
+    }
+}
+
+#[cfg(feature = "async_monoio")]
+pub use non_blocking_monoio::*;

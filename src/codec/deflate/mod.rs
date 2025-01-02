@@ -1,5 +1,5 @@
-use http;
 use core::slice;
+use http;
 use std::{
     ffi::{c_char, c_int, c_uint},
     mem::{self, transmute, MaybeUninit},
@@ -28,6 +28,11 @@ use libz_sys::{Z_BUF_ERROR, Z_NO_FLUSH, Z_OK, Z_SYNC_FLUSH};
 mod non_blocking;
 #[cfg(feature = "async")]
 pub use non_blocking::*;
+
+#[cfg(feature = "async_monoio")]
+mod non_blocking_monoio;
+#[cfg(feature = "async_monoio")]
+pub use non_blocking_monoio::*;
 
 use crate::{errors::WsError, frame::OpCode};
 

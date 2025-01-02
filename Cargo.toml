@@ -35,14 +35,17 @@ sha1 = "0.10"
 simdutf8 = "0.1.4"
 
 tokio = { version = "1", features = ["rt", "net", "io-util"], optional = true }
-
+monoio = { version = "0.2.4", optional = true }
+monoio-compat = { version = "0.2.2", optional = true }
 
 # tls deps
+rustls = { version = "~0.23.4", default-features = false, features = ["std", "ring"], optional = true }
+monoio-rustls = { version = "0.4.0", optional = true }
 tokio-rustls = { version = "0.23", optional = true }
 tokio-native-tls = { version = "0.3.1", optional = true }
 rustls-pemfile = { version = "1.0.1", optional = true }
 webpki = { version = "0.22", optional = true }
-webpki-roots = { version = "0.22.5", optional = true }
+webpki-roots = { version = "0.26.1", optional = true }
 rustls-connector = { version = "0.16", optional = true, features = [
     "webpki-roots-certs",
 ] }
@@ -59,11 +62,14 @@ hyper-util = { version = "0.1", optional = true }
 
 
 [features]
-default = ["sync", "simple", "sync_tls_rustls"]
+default = ["sync", "simple", "sync_tls_rustls", "async_monoio", "async_monoio_rustls"]
+# default = ["async_monoio", "simple", "async_monoio_rustls"]
 sync = []
 sync_tls_rustls = ["sync", "rustls-connector", "rustls-pemfile"]
 sync_tls_native = ["sync", "native-tls"]
 async = ["tokio"]
+async_monoio = ["monoio", "monoio-compat"]
+async_monoio_rustls = ["async", "webpki", "webpki-roots", "rustls-pemfile", "rustls-connector", "monoio-rustls", "rustls"]
 async_tls_rustls = [
     "async",
     "tokio-rustls",

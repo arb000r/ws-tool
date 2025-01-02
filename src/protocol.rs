@@ -247,6 +247,66 @@ mod non_blocking {
 #[cfg(feature = "async")]
 pub use non_blocking::*;
 
+#[cfg(feature = "async_monoio")]
+mod non_blocking_monoio {
+    use http;
+    use monoio::io::{AsyncReadRentExt, AsyncWriteRentExt};
+    use std::collections::HashMap;
+
+    use bytes::{BufMut, BytesMut};
+
+    use crate::{errors::WsError, protocol::prepare_handshake};
+
+    use super::{handle_parse_handshake, perform_parse_req};
+
+    /// perform http upgrade
+    ///
+    /// **NOTE**: low level api
+    pub async fn async_req_handshake_monoio<S: AsyncReadRentExt + AsyncWriteRentExt + Unpin>(
+        stream: &mut S,
+        uri: &http::Uri,
+        protocols: &[String],
+        extensions: &[String],
+        version: u8,
+        extra_headers: HashMap<String, String>,
+    ) -> Result<(String, http::Response<()>), WsError> {
+        let (key, req_str) = prepare_handshake(protocols, extensions, extra_headers, uri, version);
+        let _result = stream.write_all(req_str.into_bytes()).await;
+        let mut read_bytes = BytesMut::with_capacity(1024);
+        loop {
+            let buf = BytesMut::with_capacity(1);
+            let (result, populated_buf) = stream.read_exact(buf).await;
+            let _bytes_read = result?;
+            read_bytes.put_u8(populated_buf[0]);
+            let header_complete = read_bytes.ends_with(&[b'\r', b'\n', b'\r', b'\n']);
+            if header_complete {
+                break;
+            }
+        }
+        perform_parse_req(read_bytes, key)
+    }
+
+    /// async version of handling protocol handshake
+    pub async fn async_handle_handshake_monoio<S: AsyncReadRentExt + AsyncWriteRentExt + Unpin>(
+        stream: &mut S,
+    ) -> Result<http::Request<()>, WsError> {
+        let mut req_bytes = BytesMut::with_capacity(1024);
+        loop {
+            let buf = BytesMut::with_capacity(1);
+            let (result, populated_buf) = stream.read_exact(buf).await;
+            let _bytes_read = result?;
+            req_bytes.put_u8(populated_buf[0]);
+            if req_bytes.ends_with(&[b'\r', b'\n', b'\r', b'\n']) {
+                break;
+            }
+        }
+        handle_parse_handshake(req_bytes)
+    }
+}
+
+#[cfg(feature = "async")]
+pub use non_blocking_monoio::*;
+
 /// generate random key
 pub fn gen_key() -> String {
     let r: [u8; 16] = rand::random();
